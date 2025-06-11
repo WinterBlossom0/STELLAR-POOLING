@@ -10,47 +10,25 @@ def stellar_pool(input_tensor, channels, kernel_size):
         input_tensor = input_tensor[:, :, :3]  # Only take RGB
         channels = 3
     
-    # Handle different kernel sizes
-    if kernel_size == 2:
-        # Apply 2x2 pooling once
-        return apply_2x2_pooling(input_tensor, channels)
-    elif kernel_size == 4:
-        # Apply 2x2 pooling twice
-        # print("Applying 2x2 pooling twice for 4x4 kernel")
-        
-        # First pass: 2x2 pooling
-        intermediate_result = apply_2x2_pooling(input_tensor, channels)
-        # print(f"After first 2x2 pass: {input_tensor.shape} -> {intermediate_result.shape}")
-        
-        # Second pass: 2x2 pooling on the result
-        final_result = apply_2x2_pooling(intermediate_result, channels)
-        # print(f"After second 2x2 pass: {intermediate_result.shape} -> {final_result.shape}")
-        
-        return final_result
-    elif kernel_size == 6:
-        # Apply 2x2 pooling three times
-        # print("Applying 2x2 pooling three times for 6x6 kernel")
-        
-        # First pass
-        result1 = apply_2x2_pooling(input_tensor, channels)
-        # print(f"After first 2x2 pass: {input_tensor.shape} -> {result1.shape}")
-        
-        # Second pass
-        result2 = apply_2x2_pooling(result1, channels)
-        # print(f"After second 2x2 pass: {result1.shape} -> {result2.shape}")
-        
-        # Third pass
-        final_result = apply_2x2_pooling(result2, channels)
-        # print(f"After third 2x2 pass: {result2.shape} -> {final_result.shape}")
-        
-        return final_result
-    else:
-        raise ValueError(f"Kernel size {kernel_size} not supported. Only even numbers (2, 4, 6, 8...) are supported.")
+    # Handle any kernel size greater than 1
+    if kernel_size < 2:
+        raise ValueError(f"Kernel size {kernel_size} not supported. Only kernel sizes >= 2 are supported.")
+    
+    return apply_pooling(input_tensor, channels, kernel_size)
 
-def apply_2x2_pooling(input_tensor, channels):
-    """Apply 2x2 stellar pooling algorithm"""
+def apply_pooling(input_tensor, channels, kernel_size):
+    """Apply stellar pooling algorithm with any kernel size"""
     height, width = input_tensor.shape[:2]
-    kernel_size = 2
+    
+    # Calculate exact output dimensions
+    output_height = height // kernel_size
+    output_width = width // kernel_size
+    
+    # DEBUG: Print dimensions
+    print(f"Input dimensions: {height}x{width}")
+    print(f"Kernel size: {kernel_size}")
+    print(f"Output dimensions: {output_height}x{output_width}")
+    print(f"Total output pixels: {output_height * output_width}")
     
     if channels == 3:
         red_entropy = calculate_entropy(input_tensor[:, :, 0])
@@ -58,27 +36,20 @@ def apply_2x2_pooling(input_tensor, channels):
         blue_entropy = calculate_entropy(input_tensor[:, :, 2])
         global_entropies = [red_entropy, green_entropy, blue_entropy]
         
-        output = np.zeros((height // kernel_size, width // kernel_size, 3), dtype=input_tensor.dtype)
+        output = np.zeros((output_height, output_width, 3), dtype=input_tensor.dtype)
         printed = False
         
-        for i in range(0, height - kernel_size + 1, kernel_size):
-            for j in range(0, width - kernel_size + 1, kernel_size):
+        # Use output dimensions for loop range
+        for out_i in range(output_height):
+            for out_j in range(output_width):
+                i = out_i * kernel_size
+                j = out_j * kernel_size
                 block = input_tensor[i:i+kernel_size, j:j+kernel_size, :]
                 processed_pixel = process_block(block, channels, input_tensor, i, j, kernel_size, printed, global_entropies)
-                output[i//kernel_size, j//kernel_size, :] = processed_pixel
-                printed = True
-                
-    else:
-        output = np.zeros((height // kernel_size, width // kernel_size), dtype=input_tensor.dtype)
-        printed = False
-        
-        for i in range(0, height - kernel_size + 1, kernel_size):
-            for j in range(0, width - kernel_size + 1, kernel_size):
-                block = input_tensor[i:i+kernel_size, j:j+kernel_size]
-                processed_pixel = process_block(block, channels, input_tensor, i, j, kernel_size, printed, None)
-                output[i//kernel_size, j//kernel_size] = processed_pixel
+                output[out_i, out_j, :] = processed_pixel
                 printed = True
     
+    print(f"Final output shape: {output.shape}")
     return output
 
 def calculate_entropy(channel):
@@ -97,166 +68,255 @@ def calculate_entropy(channel):
 
 def process_block(block, channels, full_image, i, j, kernel_size, printed, global_entropies):
     if channels == 3:
-        max_vals = np.max(block, axis=(0,1))
-        min_vals = np.min(block, axis=(0,1))
-        
-        max_positions = []
-        min_positions = []
-        for c in range(3):  # Only RGB channels
-            max_pos = np.unravel_index(np.argmax(block[:,:,c]), block[:,:,c].shape)
-            min_pos = np.unravel_index(np.argmin(block[:,:,c]), block[:,:,c].shape)
-            max_positions.append(max_pos)
-            min_positions.append(min_pos)
-        
-        # if not printed:
-        #     print("Max values:", max_vals)
-        #     print("Min values:", min_vals)
-        #     print("Max positions:", max_positions)
-        #     print("Min positions:", min_positions)
-        
         height, width = full_image.shape[:2]
         
-        start_i = max(0, i - 1)
-        end_i = min(height, i + kernel_size + 1)
-        start_j = max(0, j - 1)
-        end_j = min(width, j + kernel_size + 1)
+        # Calculate neighbor window size: kernel_size + kernel_size - 1
+        neighbor_window_size = kernel_size + kernel_size - 1
+        neighbor_radius = neighbor_window_size // 2
+        
+        start_i = max(0, i - neighbor_radius)
+        end_i = min(height, i + kernel_size + neighbor_radius)
+        start_j = max(0, j - neighbor_radius)
+        end_j = min(width, j + kernel_size + neighbor_radius)
         
         neighbor_block = full_image[start_i:end_i, start_j:end_j, :]
         
+        # Create mask to exclude the kernel area
         mask = np.ones(neighbor_block.shape[:2], dtype=bool)
-        rel_i = max(0, 1 - (i - start_i))
-        rel_j = max(0, 1 - (j - start_j))
+        rel_i = i - start_i
+        rel_j = j - start_j
         mask[rel_i:rel_i+kernel_size, rel_j:rel_j+kernel_size] = False
         
         neighbor_values = neighbor_block[mask]
         
-        block_reshaped = block.reshape(-1, 3)  # Always 3 channels
+        block_reshaped = block.reshape(-1, 3)
         combined_values = np.concatenate([block_reshaped, neighbor_values])
         
-        median_values = []
-        local_entropies = []
-        votes = []
+        # Calculate number of votes per channel based on 3:1 ratio from KERNEL pixels only
+        kernel_pixels = kernel_size * kernel_size  # 6x6 = 36 pixels
+        votes_per_channel = int((kernel_pixels * 3) / 12)  # Round down to lowest integer
         
-        for c in range(3):  # Only RGB channels
-            # For median: exclude max and min
-            channel_values_median = combined_values[:, c].copy()
-            channel_values_median = np.sort(channel_values_median)
+        selected_pixels = []
+        
+        for c in range(3):  # RGB channels
+            channel_values = combined_values[:, c].copy()
+            sorted_indices = np.argsort(channel_values)
+            sorted_values = channel_values[sorted_indices]
             
-            min_idx = np.where(channel_values_median == min_vals[c])[0]
-            max_idx = np.where(channel_values_median == max_vals[c])[0]
+            # Get min and max values with their positions for voting
+            min_values = []
+            max_values = []
+            min_positions = []
+            max_positions = []
             
-            if len(min_idx) > 0:
-                channel_values_median = np.delete(channel_values_median, min_idx[0])
-            if len(max_idx) > 0:
-                max_idx = np.where(channel_values_median == max_vals[c])[0]
-                if len(max_idx) > 0:
-                    channel_values_median = np.delete(channel_values_median, max_idx[0])
+            # Find positions of min/max values in the original block
+            for v in range(votes_per_channel):
+                min_val = sorted_values[v]
+                max_val = sorted_values[-(v+1)]
+                
+                min_values.append(min_val)
+                max_values.append(max_val)
+                
+                # Find positions in block (not combined_values)
+                block_flat = block[:,:,c].flatten()
+                min_pos = np.where(block_flat == min_val)[0]
+                max_pos = np.where(block_flat == max_val)[0]
+                
+                if len(min_pos) > 0:
+                    min_pos_2d = np.unravel_index(min_pos[0], block[:,:,c].shape)
+                    min_positions.append(min_pos_2d)
+                else:
+                    min_positions.append((0, 0))  # Fallback
+                    
+                if len(max_pos) > 0:
+                    max_pos_2d = np.unravel_index(max_pos[0], block[:,:,c].shape)
+                    max_positions.append(max_pos_2d)
+                else:
+                    max_positions.append((0, 0))  # Fallback
             
-            median_val = np.median(channel_values_median)
-            median_values.append(median_val)
+            # Exclude min and max values for median calculation
+            median_values = sorted_values[votes_per_channel:-votes_per_channel] if votes_per_channel > 0 else sorted_values
+            median_val = np.median(median_values)
             
-            # For entropy: include max and min
-            channel_values_entropy = combined_values[:, c]
-            local_entropy = calculate_entropy(channel_values_entropy)
-            local_entropies.append(local_entropy)
-            
-            # Voting logic
+            # Calculate local entropy
+            local_entropy = calculate_entropy(channel_values)
             global_entropy = global_entropies[c]
             
-            # Calculate distances from median for max and min pixels in the 2x2 block
-            max_distance = abs(max_vals[c] - median_val)
-            min_distance = abs(min_vals[c] - median_val)
-            
-            if local_entropy < global_entropy:
-                # Vote for pixel with GREATER distance to median
-                if max_distance > min_distance:
-                    vote = "max"  # Max pixel is farther from median
+            # Voting for each pair
+            channel_selected_pixels = []
+            for v in range(votes_per_channel):
+                max_distance = abs(max_values[v] - median_val)
+                min_distance = abs(min_values[v] - median_val)
+                
+                if local_entropy < global_entropy:
+                    # Vote for pixel with GREATER distance to median
+                    if max_distance > min_distance:
+                        pixel_pos = max_positions[v]
+                    else:
+                        pixel_pos = min_positions[v]
                 else:
-                    vote = "min"  # Min pixel is farther from median
-            else:
-                # Vote for pixel with SMALLER distance to median
-                if max_distance < min_distance:
-                    vote = "max"  # Max pixel is closer to median
-                else:
-                    vote = "min"  # Min pixel is closer to median
+                    # Vote for pixel with SMALLER distance to median
+                    if max_distance < min_distance:
+                        pixel_pos = max_positions[v]
+                    else:
+                        pixel_pos = min_positions[v]
+                
+                channel_selected_pixels.append(block[pixel_pos[0], pixel_pos[1], :].astype(np.float64))
             
-            votes.append(vote)
+            # If no votes, use center pixel as fallback
+            if len(channel_selected_pixels) == 0:
+                center_pos = (kernel_size//2, kernel_size//2)
+                channel_selected_pixels.append(block[center_pos[0], center_pos[1], :].astype(np.float64))
+            
+            selected_pixels.extend(channel_selected_pixels)
         
-        # if not printed:
-        #     print("Median values:", median_values)
-        #     print("Local entropies:", local_entropies)
-        #     print("Global entropies:", global_entropies)
-        #     print("Votes (R,G,B):", votes)
-        
-        # Count votes and select pixels
-        selected_pixels = []
-        for c in range(3):
-            if votes[c] == "max":
-                selected_pixels.append(block[max_positions[c][0], max_positions[c][1], :].astype(np.float64))
+        # Handle duplicate pixels - keep track of unique pixels and their weights
+        unique_pixels = {}
+        for pixel in selected_pixels:
+            pixel_key = tuple(pixel)
+            if pixel_key in unique_pixels:
+                unique_pixels[pixel_key] += 1
             else:
-                selected_pixels.append(block[min_positions[c][0], min_positions[c][1], :].astype(np.float64))
-
-        # Add selected pixels and divide by 3
-        result_pixel = (selected_pixels[0] + selected_pixels[1] + selected_pixels[2]) / 3.0
+                unique_pixels[pixel_key] = 1
         
-        # if not printed:
-        #     print("Selected pixels:", selected_pixels)
-        #     print("Result pixel:", result_pixel)
+        # Calculate weighted average
+        total_weight = sum(unique_pixels.values())
+        result_pixel = np.zeros(3, dtype=np.float64)
+        
+        for pixel_tuple, weight in unique_pixels.items():
+            pixel_array = np.array(pixel_tuple)
+            result_pixel += pixel_array * weight
+        
+        result_pixel /= total_weight
         
         return result_pixel.astype(block.dtype)
+    
     else:
-        max_val = np.max(block)
-        min_val = np.min(block)
+        # Convert grayscale to 3 channels (RGB with same values) to follow same logic
+        if len(full_image.shape) == 2:
+            # Expand grayscale to 3 channels
+            full_image_3ch = np.stack([full_image, full_image, full_image], axis=2)
+            block_3ch = np.stack([block, block, block], axis=2)
+        else:
+            full_image_3ch = full_image
+            block_3ch = block
         
-        max_pos = np.unravel_index(np.argmax(block), block.shape)
-        min_pos = np.unravel_index(np.argmin(block), block.shape)
+        # Now process as RGB with 3 identical channels
+        height, width = full_image_3ch.shape[:2]
         
-        # if not printed:
-        #     print("Max value:", max_val)
-        #     print("Min value:", min_val)
-        #     print("Max position:", max_pos)
-        #     print("Min position:", min_pos)
+        neighbor_window_size = kernel_size + kernel_size - 1
+        neighbor_radius = neighbor_window_size // 2
         
-        height, width = full_image.shape[:2]
+        start_i = max(0, i - neighbor_radius)
+        end_i = min(height, i + kernel_size + neighbor_radius)
+        start_j = max(0, j - neighbor_radius)
+        end_j = min(width, j + kernel_size + neighbor_radius)
         
-        start_i = max(0, i - 1)
-        end_i = min(height, i + kernel_size + 1)
-        start_j = max(0, j - 1)
-        end_j = min(width, j + kernel_size + 1)
+        neighbor_block = full_image_3ch[start_i:end_i, start_j:end_j, :]
         
-        neighbor_block = full_image[start_i:end_i, start_j:end_j]
-        
-        mask = np.ones(neighbor_block.shape, dtype=bool)
-        rel_i = max(0, 1 - (i - start_i))
-        rel_j = max(0, 1 - (j - start_j))
+        mask = np.ones(neighbor_block.shape[:2], dtype=bool)
+        rel_i = i - start_i
+        rel_j = j - start_j
         mask[rel_i:rel_i+kernel_size, rel_j:rel_j+kernel_size] = False
         
         neighbor_values = neighbor_block[mask]
         
-        combined_values = np.concatenate([block.flatten(), neighbor_values])
+        block_reshaped = block_3ch.reshape(-1, 3)
+        combined_values = np.concatenate([block_reshaped, neighbor_values])
         
-        # For median: exclude max and min
-        combined_values_median = np.sort(combined_values.copy())
-        min_idx = np.where(combined_values_median == min_val)[0]
-        max_idx = np.where(combined_values_median == max_val)[0]
+        # Calculate global entropy from the single grayscale channel (all 3 are identical)
+        global_entropy = calculate_entropy(full_image_3ch[:, :, 0])
+        global_entropies = [global_entropy, global_entropy, global_entropy]
         
-        if len(min_idx) > 0:
-            combined_values_median = np.delete(combined_values_median, min_idx[0])
-        if len(max_idx) > 0:
-            max_idx = np.where(combined_values_median == max_val)[0]
-            if len(max_idx) > 0:
-                combined_values_median = np.delete(combined_values_median, max_idx[0])
+        # Use same RGB processing logic
+        kernel_pixels = kernel_size * kernel_size
+        votes_per_channel = int((kernel_pixels * 3) / 12)
         
-        median_val = np.median(combined_values_median)
+        selected_pixels = []
         
-        # For entropy: include max and min
-        local_entropy = calculate_entropy(combined_values)
+        for c in range(3):  # Process all 3 identical channels
+            channel_values = combined_values[:, c].copy()
+            sorted_indices = np.argsort(channel_values)
+            sorted_values = channel_values[sorted_indices]
+            
+            min_values = []
+            max_values = []
+            min_positions = []
+            max_positions = []
+            
+            for v in range(votes_per_channel):
+                min_val = sorted_values[v]
+                max_val = sorted_values[-(v+1)]
+                
+                min_values.append(min_val)
+                max_values.append(max_val)
+                
+                block_flat = block_3ch[:,:,c].flatten()
+                min_pos = np.where(block_flat == min_val)[0]
+                max_pos = np.where(block_flat == max_val)[0]
+                
+                if len(min_pos) > 0:
+                    min_pos_2d = np.unravel_index(min_pos[0], block_3ch[:,:,c].shape)
+                    min_positions.append(min_pos_2d)
+                else:
+                    min_positions.append((0, 0))
+                    
+                if len(max_pos) > 0:
+                    max_pos_2d = np.unravel_index(max_pos[0], block_3ch[:,:,c].shape)
+                    max_positions.append(max_pos_2d)
+                else:
+                    max_positions.append((0, 0))
+            
+            median_values = sorted_values[votes_per_channel:-votes_per_channel] if votes_per_channel > 0 else sorted_values
+            median_val = np.median(median_values)
+            
+            local_entropy = calculate_entropy(channel_values)
+            global_entropy = global_entropies[c]
+            
+            channel_selected_pixels = []
+            for v in range(votes_per_channel):
+                max_distance = abs(max_values[v] - median_val)
+                min_distance = abs(min_values[v] - median_val)
+                
+                if local_entropy < global_entropy:
+                    if max_distance > min_distance:
+                        pixel_pos = max_positions[v]
+                    else:
+                        pixel_pos = min_positions[v]
+                else:
+                    if max_distance < min_distance:
+                        pixel_pos = max_positions[v]
+                    else:
+                        pixel_pos = min_positions[v]
+                
+                channel_selected_pixels.append(block_3ch[pixel_pos[0], pixel_pos[1], :].astype(np.float64))
+            
+            if len(channel_selected_pixels) == 0:
+                center_pos = (kernel_size//2, kernel_size//2)
+                channel_selected_pixels.append(block_3ch[center_pos[0], center_pos[1], :].astype(np.float64))
+            
+            selected_pixels.extend(channel_selected_pixels)
         
-        # if not printed:
-        #     print("Median value:", median_val)
-        #     print("Local entropy:", local_entropy)
+        # Handle duplicates and calculate weighted average
+        unique_pixels = {}
+        for pixel in selected_pixels:
+            pixel_key = tuple(pixel)
+            if pixel_key in unique_pixels:
+                unique_pixels[pixel_key] += 1
+            else:
+                unique_pixels[pixel_key] = 1
         
-        return median_val
+        total_weight = sum(unique_pixels.values())
+        result_pixel = np.zeros(3, dtype=np.float64)
+        
+        for pixel_tuple, weight in unique_pixels.items():
+            pixel_array = np.array(pixel_tuple)
+            result_pixel += pixel_array * weight
+        
+        result_pixel /= total_weight
+        
+        # Return only the first channel value (since all 3 are identical for grayscale)
+        return result_pixel[0].astype(block.dtype)
 
 # Main execution
 if __name__ == "__main__":
@@ -264,18 +324,14 @@ if __name__ == "__main__":
     image = Image.open("image.png")
     image_tensor = np.array(image)[:, :, :3]  # Only take RGB, ignore alpha
     
-    print(f"Original image shape: {image_tensor.shape}")
-    
     # Apply stellar pooling with different kernel sizes
-    kernel_size = 4  # Change this to test different kernel sizes (2, 4, 6, 8...)
+    kernel_size = 2  # Now supports any kernel size >= 2
     
     result = stellar_pool(image_tensor, 3, kernel_size)
-    print(f"Compressed result shape: {result.shape}")
     
     # Convert result back to image and save
     result_image = Image.fromarray(result.astype(np.uint8))
     result_image.save(f"custom_{kernel_size}x{kernel_size}.png")
     
-    print(f"✓ Compressed image saved as 'custom_{kernel_size}x{kernel_size}.png'")
     compression_ratio = (image_tensor.shape[0] * image_tensor.shape[1]) / (result.shape[0] * result.shape[1])
     print(f"Compression ratio: {compression_ratio:.1f}x smaller")
