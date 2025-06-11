@@ -100,94 +100,123 @@ def process_block(block, channels, full_image, i, j, kernel_size, printed, globa
         
         for c in range(3):  # RGB channels
             channel_values = combined_values[:, c].copy()
-            sorted_indices = np.argsort(channel_values)
-            sorted_values = channel_values[sorted_indices]
             
-            # Get min and max values with their positions for voting
-            min_values = []
-            max_values = []
-            min_positions = []
-            max_positions = []
-            
-            # Find positions of min/max values in the original block
-            for v in range(votes_per_channel):
-                min_val = sorted_values[v]
-                max_val = sorted_values[-(v+1)]
+            if votes_per_channel == 1:
+                # For 2x2 kernel: Find single min and max from KERNEL BLOCK ONLY
+                block_channel = block[:, :, c].flatten()
+                min_val = np.min(block_channel)
+                max_val = np.max(block_channel)
                 
-                min_values.append(min_val)
-                max_values.append(max_val)
-                
-                # Find positions in block (not combined_values)
-                block_flat = block[:,:,c].flatten()
-                min_pos = np.where(block_flat == min_val)[0]
-                max_pos = np.where(block_flat == max_val)[0]
+                # Find positions in block
+                min_pos = np.where(block_channel == min_val)[0]
+                max_pos = np.where(block_channel == max_val)[0]
                 
                 if len(min_pos) > 0:
                     min_pos_2d = np.unravel_index(min_pos[0], block[:,:,c].shape)
-                    min_positions.append(min_pos_2d)
                 else:
-                    min_positions.append((0, 0))  # Fallback
+                    min_pos_2d = (0, 0)
                     
                 if len(max_pos) > 0:
                     max_pos_2d = np.unravel_index(max_pos[0], block[:,:,c].shape)
-                    max_positions.append(max_pos_2d)
                 else:
-                    max_positions.append((0, 0))  # Fallback
-            
-            # Exclude min and max values for median calculation
-            median_values = sorted_values[votes_per_channel:-votes_per_channel] if votes_per_channel > 0 else sorted_values
-            median_val = np.median(median_values)
-            
-            # Calculate local entropy
-            local_entropy = calculate_entropy(channel_values)
-            global_entropy = global_entropies[c]
-            
-            # Voting for each pair
-            channel_selected_pixels = []
-            for v in range(votes_per_channel):
-                max_distance = abs(max_values[v] - median_val)
-                min_distance = abs(min_values[v] - median_val)
+                    max_pos_2d = (0, 0)
+                
+                # Use combined_values for median calculation (kernel + neighbors)
+                median_val = np.median(channel_values)
+                
+                # Calculate local entropy from combined values
+                local_entropy = calculate_entropy(channel_values)
+                global_entropy = global_entropies[c]
+                
+                # Single vote: max vs min from kernel block
+                max_distance = abs(max_val - median_val)
+                min_distance = abs(min_val - median_val)
                 
                 if local_entropy < global_entropy:
-                    # Vote for pixel with GREATER distance to median
                     if max_distance > min_distance:
-                        pixel_pos = max_positions[v]
+                        pixel_pos = max_pos_2d
                     else:
-                        pixel_pos = min_positions[v]
+                        pixel_pos = min_pos_2d
                 else:
-                    # Vote for pixel with SMALLER distance to median
                     if max_distance < min_distance:
-                        pixel_pos = max_positions[v]
+                        pixel_pos = max_pos_2d
                     else:
-                        pixel_pos = min_positions[v]
+                        pixel_pos = min_pos_2d
                 
-                channel_selected_pixels.append(block[pixel_pos[0], pixel_pos[1], :].astype(np.float64))
+                selected_pixels.append(block[pixel_pos[0], pixel_pos[1], :].astype(np.float64))
             
-            # If no votes, use center pixel as fallback
-            if len(channel_selected_pixels) == 0:
-                center_pos = (kernel_size//2, kernel_size//2)
-                channel_selected_pixels.append(block[center_pos[0], center_pos[1], :].astype(np.float64))
-            
-            selected_pixels.extend(channel_selected_pixels)
-        
-        # Handle duplicate pixels - keep track of unique pixels and their weights
-        unique_pixels = {}
-        for pixel in selected_pixels:
-            pixel_key = tuple(pixel)
-            if pixel_key in unique_pixels:
-                unique_pixels[pixel_key] += 1
             else:
-                unique_pixels[pixel_key] = 1
+                # For 3x3+ kernels: Find multiple min/max from KERNEL BLOCK ONLY
+                block_channel = block[:, :, c].flatten()
+                sorted_indices = np.argsort(block_channel)
+                sorted_block_values = block_channel[sorted_indices]
+                
+                min_values = []
+                max_values = []
+                min_positions = []
+                max_positions = []
+                
+                # Get the votes_per_channel smallest and largest values from KERNEL BLOCK
+                for v in range(votes_per_channel):
+                    min_val = sorted_block_values[v]  # v-th smallest from kernel
+                    max_val = sorted_block_values[-(v+1)]  # v-th largest from kernel
+                    
+                    min_values.append(min_val)
+                    max_values.append(max_val)
+                    
+                    # Find positions in block
+                    min_pos = np.where(block_channel == min_val)[0]
+                    max_pos = np.where(block_channel == max_val)[0]
+                    
+                    if len(min_pos) > 0:
+                        min_pos_2d = np.unravel_index(min_pos[0], block[:,:,c].shape)
+                        min_positions.append(min_pos_2d)
+                    else:
+                        min_positions.append((0, 0))
+                        
+                    if len(max_pos) > 0:
+                        max_pos_2d = np.unravel_index(max_pos[0], block[:,:,c].shape)
+                        max_positions.append(max_pos_2d)
+                    else:
+                        max_positions.append((0, 0))
+                
+                # Use combined_values for median calculation (excluding extremes)
+                median_values = channel_values  # Use all combined values for median
+                median_val = np.median(median_values)
+                
+                # Calculate local entropy from combined values
+                local_entropy = calculate_entropy(channel_values)
+                global_entropy = global_entropies[c]
+                
+                # Vote for each pair
+                for v in range(votes_per_channel):
+                    max_distance = abs(max_values[v] - median_val)
+                    min_distance = abs(min_values[v] - median_val)
+                    
+                    if local_entropy < global_entropy:
+                        if max_distance > min_distance:
+                            pixel_pos = max_positions[v]
+                        else:
+                            pixel_pos = min_positions[v]
+                    else:
+                        if max_distance < min_distance:
+                            pixel_pos = max_positions[v]
+                        else:
+                            pixel_pos = min_positions[v]
+                    
+                    selected_pixels.append(block[pixel_pos[0], pixel_pos[1], :].astype(np.float64))
+                
+                if votes_per_channel == 0:
+                    center_pos = (kernel_size//2, kernel_size//2)
+                    selected_pixels.append(block[center_pos[0], center_pos[1], :].astype(np.float64))
         
-        # Calculate weighted average
-        total_weight = sum(unique_pixels.values())
-        result_pixel = np.zeros(3, dtype=np.float64)
-        
-        for pixel_tuple, weight in unique_pixels.items():
-            pixel_array = np.array(pixel_tuple)
-            result_pixel += pixel_array * weight
-        
-        result_pixel /= total_weight
+        # Use SIMPLE averaging like pool_og.py (no duplicate handling)
+        if len(selected_pixels) > 0:
+            result_pixel = np.sum(selected_pixels, axis=0) / len(selected_pixels)
+        else:
+            # Fallback to center pixel
+            center_pos = (kernel_size//2, kernel_size//2)
+            result_pixel = block[center_pos[0], center_pos[1], :].astype(np.float64)
         
         return result_pixel.astype(block.dtype)
     
