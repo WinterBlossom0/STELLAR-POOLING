@@ -43,12 +43,6 @@ def apply_pooling(input_tensor, channels, kernel_size):
     output_height = height // kernel_size
     output_width = width // kernel_size
     
-    # DEBUG: Print dimensions
-    print(f"Input dimensions: {height}x{width}")
-    print(f"Kernel size: {kernel_size}")
-    print(f"Output dimensions: {output_height}x{output_width}")
-    print(f"Total output pixels: {output_height * output_width}")
-    
     # Always process as RGB (channels=3)
     red_entropy = calculate_entropy(input_tensor[:, :, 0])
     green_entropy = calculate_entropy(input_tensor[:, :, 1])
@@ -68,7 +62,6 @@ def apply_pooling(input_tensor, channels, kernel_size):
             output[out_i, out_j, :] = processed_pixel
             printed = True
     
-    print(f"Final output shape: {output.shape}")
     return output
 
 def calculate_entropy(channel):
